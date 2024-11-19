@@ -26,6 +26,9 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
 from utils import visualize
+from servo_pump import set_angle
+from servo_pump import inc_angle
+
 
 # Global variables to calculate FPS
 COUNTER, FPS = 0, 0
@@ -61,6 +64,8 @@ def run(model: str, max_results: int, score_threshold: float,
   detection_frame = None
   detection_result_list = []
 
+  set_angle(135)
+
   def save_result(result: vision.ObjectDetectorResult, unused_output_image: mp.Image, timestamp_ms: int):
       global FPS, COUNTER, START_TIME
 
@@ -68,6 +73,17 @@ def run(model: str, max_results: int, score_threshold: float,
       if COUNTER % fps_avg_frame_count == 0:
           FPS = fps_avg_frame_count / (time.time() - START_TIME)
           START_TIME = time.time()
+      
+      if result.detections: 
+        for detection in result.detections:
+            bbox = detection.bounding_box
+            x_min = bbox.origin_x
+            width = bbox.width
+
+            if (x_min + width/2 + 3) < 320/2:
+                inc_angle(3)
+            elif (x_min + width/2 - 3) > 320/2:
+                inc_angle(-3)
 
       detection_result_list.append(result)
       COUNTER += 1
@@ -111,6 +127,7 @@ def run(model: str, max_results: int, score_threshold: float,
         # print(detection_result_list)
         current_frame = visualize(current_frame, detection_result_list[0])
         detection_frame = current_frame
+
         detection_result_list.clear()
 
     if detection_frame is not None:
@@ -132,7 +149,7 @@ def main():
       '--model',
       help='Path of the object detection model.',
       required=False,
-      default='efficientdet.tflite')
+      default='efficientdet_lite0.tflite')
   parser.add_argument(
       '--maxResults',
       help='Max number of detection results.',
@@ -143,7 +160,7 @@ def main():
       help='The score threshold of detection results.',
       required=False,
       type=float,
-      default=0.25)
+      default=0.20)
   # Finding the camera ID can be very reliant on platform-dependent methods. 
   # One common approach is to use the fact that camera IDs are usually indexed sequentially by the OS, starting from 0. 
   # Here, we use OpenCV and create a VideoCapture object for each potential ID with 'cap = cv2.VideoCapture(i)'.
@@ -155,18 +172,17 @@ def main():
       help='Width of frame to capture from camera.',
       required=False,
       type=int,
-      default=1536)
+      default=320) #1536
   parser.add_argument(
       '--frameHeight',
       help='Height of frame to capture from camera.',
       required=False,
       type=int,
-      default=864)
+      default=320) #864
   args = parser.parse_args()
 
   run(args.model, int(args.maxResults),
       args.scoreThreshold, int(args.cameraId), args.frameWidth, args.frameHeight)
-
 
 if __name__ == '__main__':
   main()

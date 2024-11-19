@@ -16,6 +16,11 @@ def set_angle(angle):
     servo.angle=angle
     sleep(1)
 
+def inc_angle(angle):
+    if(servo.angle+angle<=270 and servo.angle+angle>=0):
+        servo.angle+=angle
+        sleep(0.05)
+
 try:
     while True:
         angle = int(input("enter angle: "))
