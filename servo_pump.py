@@ -19,7 +19,16 @@ def set_angle(angle):
 def inc_angle(angle):
     if(servo.angle+angle<=270 and servo.angle+angle>=0):
         servo.angle+=angle
-        sleep(0.05)
+        sleep(0.05)    
+
+def start_shooting():
+    GPIO.output(RELAY_1_GPIO, GPIO.HIGH)
+    sleep(0.5)
+
+def stop_shooting():
+    GPIO.output(RELAY_1_GPIO, GPIO.LOW)
+    servo.detach()
+    sleep(0.5)
 
 try:
     while True:

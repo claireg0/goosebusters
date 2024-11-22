@@ -21,19 +21,26 @@ import time
 
 import cv2
 import mediapipe as mp
+import RPi.GPIO as GPIO
 
+from time import sleep
+from gpiozero import AngularServo
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
 from utils import visualize
 from servo_pump import set_angle
 from servo_pump import inc_angle
+from servo_pump import start_shooting
+from servo_pump import stop_shooting
 
 
 # Global variables to calculate FPS
 COUNTER, FPS = 0, 0
 START_TIME = time.time()
 
+RELAY_1_GPIO = 26
+SERVO_1_GPIO = 11
 
 def run(model: str, max_results: int, score_threshold: float, 
         camera_id: int, width: int, height: int) -> None:
@@ -66,8 +73,15 @@ def run(model: str, max_results: int, score_threshold: float,
 
   set_angle(135)
 
+  GPIO.setmode(GPIO.BCM) # GPIO Numbers instead of board numbers 
+  GPIO.setup(RELAY_1_GPIO, GPIO.OUT) # GPIO Assign mode
+  GPIO.output(RELAY_1_GPIO, GPIO.LOW) 
+
+  servo = AngularServo(SERVO_1_GPIO, min_angle =0, max_angle = 270, min_pulse_width =0.5/1000, max_pulse_width=2.5/1000)
+  servo.detach()
+
   def save_result(result: vision.ObjectDetectorResult, unused_output_image: mp.Image, timestamp_ms: int):
-      global FPS, COUNTER, START_TIME
+      global FPS, COUNTER, START_TIME, RELAY_1_GPIO, SERVO_1_GPIO
 
       # Calculate the FPS
       if COUNTER % fps_avg_frame_count == 0:
@@ -75,6 +89,7 @@ def run(model: str, max_results: int, score_threshold: float,
           START_TIME = time.time()
       
       if result.detections: 
+        start_shooting()
         for detection in result.detections:
             bbox = detection.bounding_box
             x_min = bbox.origin_x
@@ -84,6 +99,8 @@ def run(model: str, max_results: int, score_threshold: float,
                 inc_angle(3)
             elif (x_min + width/2 - 3) > 320/2:
                 inc_angle(-3)
+      else:
+        stop_shooting()
 
       detection_result_list.append(result)
       COUNTER += 1
@@ -186,4 +203,3 @@ def main():
 
 if __name__ == '__main__':
   main()
-
