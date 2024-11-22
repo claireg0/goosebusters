@@ -23,12 +23,12 @@ def inc_angle(angle):
 
 def start_shooting():
     GPIO.output(RELAY_1_GPIO, GPIO.HIGH)
-    sleep(0.5)
+    sleep(0.1)
 
 def stop_shooting():
     GPIO.output(RELAY_1_GPIO, GPIO.LOW)
     servo.detach()
-    sleep(0.5)
+    sleep(0.1)
 
 try:
     while True:
