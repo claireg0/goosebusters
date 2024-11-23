@@ -103,8 +103,9 @@ def servo_pump_thread():
         while True:
             try:
                 if not DETECTION_QUEUE:
-                    raise queue.Empty
-                    
+                    stop_shooting()
+                    continue
+
                 result = DETECTION_QUEUE.popleft()  # Wait for detection result
                 start_shooting()
                 for detection in result.detections:
@@ -114,8 +115,8 @@ def servo_pump_thread():
                         inc_angle(3)
                     elif x_center > 320 / 2 + 3:
                         inc_angle(-3)
-            except queue.Empty:
-                stop_shooting()
+            except Exception as e:
+                print(f"Error in servo_pump_thread: {e}")
     except KeyboardInterrupt:
         print("stopped")
         GPIO.cleanup()
