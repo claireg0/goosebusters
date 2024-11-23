@@ -2,29 +2,41 @@ import argparse
 import sys
 import time
 import threading
-import queue
+#import queue
 import cv2
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
+from gpiozero import AngularServo
+import RPi.GPIO as GPIO
+from picamera2 import Picamera2, Preview
+from picamera2.encoders import JpegEncoder
+from collections import deque
 
 from utils import visualize
 from servo_pump import set_angle, inc_angle, start_shooting, stop_shooting
 
 COUNTER, FPS = 0, 0
 START_TIME = time.time()
-DETECTION_QUEUE = queue.Queue()
+#DETECTION_QUEUE = queue.Queue()
+DETECTION_QUEUE = deque(maxlen=5)
 
 RELAY_1_GPIO = 26
 SERVO_1_GPIO = 11
 
-def detection_thread(model: str, max_results: int, score_threshold: float, camera_id: int, width: int, height: int)->None:
+# Initialize Picamera2 globally to be reused across threads
+picam2 = Picamera2()
+picam2.configure(picam2.create_preview_configuration(main={"size": (320, 320), "format": "RGB888"}))
+
+def add_to_queue(item):
+    DETECTION_QUEUE.append(item)  # Automatically removes the oldest if full
+
+def detection_thread(model: str, max_results: int, score_threshold: float)->None:
     """Object detection thread."""
     global COUNTER, FPS, START_TIME
 
-    cap = cv2.VideoCapture(camera_id)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    # Start the camera
+    picam2.start()
 
     def save_result(result: vision.ObjectDetectorResult, unused_output_image: mp.Image, timestamp_ms: int):
         """Callback to process detection results."""
@@ -33,7 +45,7 @@ def detection_thread(model: str, max_results: int, score_threshold: float, camer
             FPS = 10 / (time.time() - START_TIME)
             START_TIME = time.time()
         if result.detections:
-            DETECTION_QUEUE.put(result)
+            add_to_queue(result)
         COUNTER += 1
 
     base_options = python.BaseOptions(model_asset_path=model)
@@ -47,46 +59,53 @@ def detection_thread(model: str, max_results: int, score_threshold: float, camer
     )
     detector = vision.ObjectDetector.create_from_options(options)
 
-    while cap.isOpened():
-        success, image = cap.read()
-        if not success:
-            sys.exit('ERROR: Unable to read from webcam.')
-        rgb_image = cv2.cvtColor(cv2.flip(image, 1), cv2.COLOR_BGR2RGB)
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
-        detector.detect_async(mp_image, time.time_ns() // 1_000_000)
+    try:
+        while True:
+            frame = picam2.capture_array()
+            rgb_image = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
+            detector.detect_async(mp_image, time.time_ns() // 1_000_000)
 
-        # Display FPS
-        cv2.putText(
-            image,
-            f'FPS: {FPS:.1f}',
-            (24, 50),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1,
-            (0, 0, 0),
-            2
-        )
-        cv2.imshow('object_detection', image)
+            # Display FPS on the frame
+            cv2.putText(
+                frame,
+                f'FPS: {FPS:.1f}',
+                (24, 50),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 0, 0),
+                2
+            )
+            cv2.imshow('object_detection', frame)
 
-        if cv2.waitKey(1) == 27:
-            break
+            if cv2.waitKey(1) == 27:  # Exit on pressing 'Esc'
+                break
+    except Exception as e:
+        print(f"Error in detection thread: {e}")
+    finally:
+        detector.close()
+        picam2.stop()
+        cv2.destroyAllWindows()
 
-    detector.close()
-    cap.release()
-    cv2.destroyAllWindows()
 
 def servo_pump_thread():
     try:
+        '''
         GPIO.setmode(GPIO.BCM) # GPIO Numbers instead of board numbers 
         GPIO.setup(RELAY_1_GPIO, GPIO.OUT) # GPIO Assign mode
         GPIO.output(RELAY_1_GPIO, GPIO.LOW)
 
         servo = AngularServo(SERVO_1_GPIO, min_angle =0, max_angle = 270, min_pulse_width =0.5/1000, max_pulse_width=2.5/1000)
         servo.detach()
+       
         set_angle(135)
-
+        '''
         while True:
             try:
-                result = DETECTION_QUEUE.get(timeout=1)  # Wait for detection result
+                if not DETECTION_QUEUE:
+                    raise queue.Empty
+                    
+                result = DETECTION_QUEUE.popleft()  # Wait for detection result
                 start_shooting()
                 for detection in result.detections:
                     bbox = detection.bounding_box
@@ -100,33 +119,42 @@ def servo_pump_thread():
     except KeyboardInterrupt:
         print("stopped")
         GPIO.cleanup()
+    except GPIOPinInUse as e:
+        print(f"GPIO Pin conflict: {e}")
+        GPIO.cleanup()
+        raise
+    except Exception as e:
+        print(f"Error in servo_pump_thread: {e}")
+    finally:
+        GPIO.cleanup()
+        print("Servo pump thread terminated.")
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model', default='efficientdet_lite0.tflite', help='Path to detection model.')
     parser.add_argument('--maxResults', default=1, type=int, help='Max detection results.')
     parser.add_argument('--scoreThreshold', default=0.2, type=float, help='Score threshold.')
-    parser.add_argument('--cameraId', default=0, type=int, help='Camera ID.')
-    parser.add_argument('--frameWidth', default=320, type=int, help='Frame width.')
-    parser.add_argument('--frameHeight', default=320, type=int, help='Frame height.')
     args = parser.parse_args()
 
     # Start threads
-    detection_t = threading.Thread(
-        target=detection_thread,
-        args=(args.model, args.maxResults, args.scoreThreshold, args.cameraId, args.frameWidth, args.frameHeight),
-        daemon=True
-    )
+    try:
+        detection_t = threading.Thread(
+            target=detection_thread,
+            args=(args.model, args.maxResults, args.scoreThreshold),
+        )
+        servo_pump_t = threading.Thread(target=servo_pump_thread)
 
-    servo_pump_t = threading.Thread(target=servo_pump_thread, daemon=True)
+        detection_t.start()
+        servo_pump_t.start()
 
-    detection_t.start()
-    servo_pump_t.start()
-
-    detection_t.join()  # Main thread waits for detection thread to complete
-    servo_pump_t.join()
-
-    GPIO.cleanup()
+        detection_t.join()  # Wait for threads to finish
+        servo_pump_t.join()
+    except KeyboardInterrupt:
+        print("Keyboard interrupt received, stopping threads.")
+    finally:
+        GPIO.cleanup()
+        print("Application terminated.")
 
 
 if __name__ == '__main__':
