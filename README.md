@@ -30,6 +30,7 @@ Geese are great... but not when they're invading your space! **Goosebusters** of
 
 ## Hardware Requirements
 
+![Hardware](https://i.imgur.com/Ir6QORy_d.png?maxwidth=520&shape=thumb&fidelity=high)
 - Raspberry Pi 5
 - Raspberry Pi Camera Module 2 (or any other)
 - Servo motor
